@@ -1,12 +1,14 @@
 {
-  "name": "mochi-sync",
-  "version": "1.0.0",
+  "name": "send-to-mochi",
+  "version": "0.0.1",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-	  "build": "esbuild main.ts --bundle --platform=node --target=es2018 --external:obsidian --format=cjs --outfile=main.js",
-	  "dev": "esbuild main.ts --bundle --platform=node --target=es2018 --external:obsidian --format=cjs --watch --outfile=main.js"
+      "dev": "node esbuild.config.mjs",
+      "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+      "version": "node version-bump.mjs && git add manifest.json versions.json",
+      "lint": "eslint ."
   },
   "keywords": [],
   "author": "",
