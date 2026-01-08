@@ -1,0 +1,134 @@
+// src/sync-engine.ts
+import { App, Notice } from "obsidian";
+import { MochiClient } from "./mochi-api";
+import { CardParser } from "./parser";
+import { PluginSettings, SyncState } from "./types";
+
+// Simple string hash function to detect content changes
+function simpleHash(str: string): string {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return hash.toString();
+}
+
+export class SyncEngine {
+    constructor(
+        private app: App,
+        private api: MochiClient,
+        private settings: PluginSettings,
+        private getState: () => SyncState,
+        private saveState: (state: SyncState) => Promise<void>
+    ) {}
+
+    async runSync() {
+        new Notice("Starting Mochi sync...");
+        
+        // Validate settings
+        if (!this.settings.apiKey) {
+            new Notice("Error: API Key is not set. Please configure it in settings.", 10000);
+            return;
+        }
+        
+        if (!this.settings.defaultDeckId) {
+            new Notice("Error: Default Deck ID is not set. Please configure it in settings.", 10000);
+            return;
+        }
+        
+        // Get all markdown files and scan for cards
+        const files = this.app.vault.getMarkdownFiles();
+        const state = this.getState();
+        let created = 0;
+        let updated = 0;
+        let totalCardsFound = 0;
+
+        // Scan each file for cards
+        for (const file of files) {
+            const content = await this.app.vault.read(file);
+            const parseResult = CardParser.parseFile(content, file);
+            const cards = parseResult.cards;
+            totalCardsFound += cards.length;
+
+            // Update files that need IDs inserted
+            for (const [fileToUpdate, updatedContent] of parseResult.fileUpdates) {
+                await this.app.vault.modify(fileToUpdate, updatedContent);
+            }
+
+            // Process each card
+            for (const card of cards) {
+                const currentHash = simpleHash(card.question + card.answer + card.tags.join(","));
+                const mochiContent = `${card.question}\n---\n${card.answer}`;
+                const existingState = state.cards[card.id];
+
+                if (!existingState) {
+                    // Create new card
+                    try {
+                        const res = await this.api.createCard({
+                            content: mochiContent,
+                            deckId: this.settings.defaultDeckId,
+                            tags: card.tags
+                        });
+                        
+                        const mochiId = res?.id || res?._id || res?.cardId || res?.card?.id;
+                        if (!mochiId) {
+                            console.warn(`Card ${card.id} created but no ID in response`);
+                            state.cards[card.id] = {
+                                mochiId: 'unknown',
+                                contentHash: currentHash,
+                                lastSync: Date.now()
+                            };
+                        } else {
+                            state.cards[card.id] = {
+                                mochiId: mochiId,
+                                contentHash: currentHash,
+                                lastSync: Date.now()
+                            };
+                        }
+                        created++;
+                    } catch (e: any) {
+                        const errorMsg = e?.message || String(e);
+                        if (errorMsg.includes('404')) {
+                            new Notice(`404 Error creating card ${card.id}. Check deck ID "${this.settings.defaultDeckId}" and API endpoint.`, 10000);
+                        } else {
+                            new Notice(`Failed to create card ${card.id}: ${errorMsg}`, 8000);
+                        }
+                        console.error(`[MochiSync] Failed to create card ${card.id}:`, e);
+                    }
+                } else if (existingState.contentHash !== currentHash) {
+                    // Update existing card if content changed
+                    try {
+                        await this.api.updateCard(existingState.mochiId, {
+                            content: mochiContent,
+                            tags: card.tags
+                        });
+                        existingState.contentHash = currentHash;
+                        existingState.lastSync = Date.now();
+                        updated++;
+                    } catch (e: any) {
+                        const errorMsg = e?.message || String(e);
+                        new Notice(`Failed to update card ${card.id}: ${errorMsg}`, 8000);
+                        console.error(`[MochiSync] Failed to update card ${card.id}:`, e);
+                    }
+                }
+            }
+        }
+
+        // Save sync state
+        try {
+            await this.saveState(state);
+        } catch (e: any) {
+            new Notice(`Error saving sync state: ${e?.message || String(e)}`, 10000);
+            throw e;
+        }
+
+        // Show completion message
+        if (totalCardsFound === 0) {
+            new Notice(`Sync complete but no cards found. Use format:\n\`\`\`mochi\n%% id:card-id %%\nQ: Question\nA: Answer\n\`\`\``, 10000);
+        } else {
+            new Notice(`Sync complete: ${created} created, ${updated} updated.`);
+        }
+    }
+}
