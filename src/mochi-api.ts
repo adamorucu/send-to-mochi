@@ -35,14 +35,37 @@ export class MochiClient {
             throw new Error("Deck ID is required to create a card");
         }
         
-        // Try multiple endpoint patterns
+        // First, verify the deck exists by trying to fetch it
+        try {
+            const decks = await this.listDecks();
+            const deckExists = decks.some(d => d.id === card.deckId);
+            if (!deckExists) {
+                throw new Error(`Deck with ID "${card.deckId}" not found. Available decks: ${decks.map(d => `${d.name} (${d.id})`).join(', ') || 'none'}`);
+            }
+        } catch (error: unknown) {
+            // If listing decks fails, log but continue - might be a different issue
+            console.warn("Could not verify deck existence:", error);
+        }
+        
+        // Try multiple endpoint patterns and field name variations
+        // Based on Mochi API documentation, the endpoint should be POST /api/cards/
         const endpoints = [
-            // Pattern 1: Top-level cards with deck-id in body (most common)
+            // Pattern 1: Top-level cards with trailing slash and deck-id (documented format)
+            { url: `${this.baseUrl}/cards/`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
+            // Pattern 2: Try with /v1 version (some APIs use versioning)
+            { url: `${this.baseUrl}/v1/cards/`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
+            // Pattern 3: Top-level cards without trailing slash
             { url: `${this.baseUrl}/cards`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
-            // Pattern 2: Deck-specific endpoint (RESTful)
+            // Pattern 4: Deck-specific endpoint (RESTful)
             { url: `${this.baseUrl}/decks/${card.deckId}/cards`, body: { content: card.content, "manual-tags": card.tags || [] } },
-            // Pattern 3: Try with /v1 version
-            { url: `${this.baseUrl}/v1/cards`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
+            // Pattern 5: Deck-specific endpoint with trailing slash
+            { url: `${this.baseUrl}/decks/${card.deckId}/cards/`, body: { content: card.content, "manual-tags": card.tags || [] } },
+            // Pattern 6: Try with deckId (camelCase) instead of deck-id
+            { url: `${this.baseUrl}/cards/`, body: { content: card.content, deckId: card.deckId, tags: card.tags || [] } },
+            // Pattern 7: Try with deck_id (snake_case)
+            { url: `${this.baseUrl}/cards/`, body: { content: card.content, deck_id: card.deckId, tags: card.tags || [] } },
+            // Pattern 8: Try with deck field name
+            { url: `${this.baseUrl}/cards/`, body: { content: card.content, deck: card.deckId, tags: card.tags || [] } },
         ];
         
         let lastError: unknown;
@@ -60,11 +83,25 @@ export class MochiClient {
                 if (response.status >= 200 && response.status < 300) {
                     return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
                 }
-                lastError = { status: response.status, text: response.text, message: `Status ${response.status}`, url: endpoint.url };
+                
+                // Log the response for debugging
+                console.debug(`Attempted ${endpoint.url} with body:`, endpoint.body);
+                console.debug(`Response status: ${response.status}, body:`, response.text);
+                
+                lastError = { 
+                    status: response.status, 
+                    text: response.text, 
+                    message: `Status ${response.status}: ${response.text || 'Unknown error'}`,
+                    url: endpoint.url 
+                };
             } catch (error: unknown) {
                 // Add URL info to error if it's a status error
                 if (error && typeof error === 'object' && 'status' in error) {
                     (error as { url?: string }).url = endpoint.url;
+                    // Try to extract response text if available
+                    if ('text' in error) {
+                        console.debug(`Error response from ${endpoint.url}:`, (error as { text?: string }).text);
+                    }
                 }
                 lastError = error;
                 // Continue to next endpoint
@@ -72,12 +109,36 @@ export class MochiClient {
             }
         }
         
-        // If all endpoints failed, include attempted URLs in error
+        // If all endpoints failed, provide helpful error message
         const urlsInfo = attemptedUrls.length > 0 ? ` (Tried: ${attemptedUrls.join(', ')})` : '';
-        if (lastError && typeof lastError === 'object' && 'message' in lastError) {
-            (lastError as { message: string }).message += urlsInfo;
+        let errorMessage = "Create card failed";
+        
+        if (lastError && typeof lastError === 'object') {
+            if ('status' in lastError && (lastError as { status: number }).status === 404) {
+                errorMessage += `: 404 - The card creation endpoint was not found${urlsInfo}. `;
+                errorMessage += `This may indicate that the Mochi API structure has changed. `;
+                errorMessage += `Please verify: 1) Your deck ID "${card.deckId}" is correct, 2) Your API key has permission to create cards, 3) Check the Mochi API documentation for the current endpoint structure.`;
+            } else if ('message' in lastError && typeof (lastError as { message: unknown }).message === 'string') {
+                errorMessage = (lastError as { message: string }).message + urlsInfo;
+            } else {
+                const errorStr = lastError instanceof Error ? lastError.message : JSON.stringify(lastError);
+                errorMessage += `: ${errorStr}${urlsInfo}`;
+            }
+        } else {
+            let errorStr: string;
+            if (lastError instanceof Error) {
+                errorStr = lastError.message;
+            } else if (lastError === null || lastError === undefined) {
+                errorStr = 'Unknown error';
+            } else if (typeof lastError === 'string') {
+                errorStr = lastError;
+            } else {
+                errorStr = JSON.stringify(lastError);
+            }
+            errorMessage += `: ${errorStr}${urlsInfo}`;
         }
-        this.handleError(lastError, "Create card");
+        
+        throw new Error(errorMessage);
     }
 
     async updateCard(cardId: string, card: { content: string, tags?: string[] }) {
@@ -94,7 +155,7 @@ export class MochiClient {
                         "manual-tags": card.tags || []
                     })
                 });
-            } catch (putError: unknown) {
+            } catch {
                 // Fallback to POST if PUT is not supported
                 response = await requestUrl({
                     url: `${this.baseUrl}/cards/${cardId}`,
@@ -117,13 +178,38 @@ export class MochiClient {
     }
 
     async listDecks(): Promise<{id: string, name: string}[]> {
-        const res = await requestUrl({
-            url: `${this.baseUrl}/decks`,
-            method: "GET",
-            headers: this.getHeaders()
-        });
-        const json = res.json as { docs?: {id: string, name: string}[] };
-        return json.docs || [];
+        try {
+            const res = await requestUrl({
+                url: `${this.baseUrl}/decks`,
+                method: "GET",
+                headers: this.getHeaders()
+            });
+            const json = res.json as { docs?: {id: string, name: string}[] };
+            return json.docs || [];
+        } catch (error: unknown) {
+            this.handleError(error, "List decks");
+            return [];
+        }
+    }
+
+    /**
+     * Test API connection by listing decks
+     * Returns true if connection is successful, false otherwise
+     */
+    async testConnection(): Promise<{ success: boolean; message: string }> {
+        try {
+            const decks = await this.listDecks();
+            return {
+                success: true,
+                message: `API connection successful. Found ${decks.length} deck(s).`
+            };
+        } catch (error: unknown) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            return {
+                success: false,
+                message: `API connection failed: ${errorMsg}. Please check your API key and network connection.`
+            };
+        }
     }
 }
 
