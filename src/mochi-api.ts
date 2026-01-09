@@ -20,8 +20,9 @@ export class MochiClient {
 
     private handleError(error: unknown, operation: string): never {
         if (error && typeof error === 'object' && 'status' in error) {
-            const statusError = error as { status: number; text?: string; message?: string };
-            throw new Error(`${operation} failed: ${statusError.status} - ${statusError.text || statusError.message || 'Unknown error'}`);
+            const statusError = error as { status: number; text?: string; message?: string; url?: string };
+            const urlInfo = statusError.url ? ` (URL: ${statusError.url})` : '';
+            throw new Error(`${operation} failed: ${statusError.status} - ${statusError.text || statusError.message || 'Unknown error'}${urlInfo}`);
         }
         if (error instanceof Error) {
             throw new Error(`${operation} failed: ${error.message}`);
@@ -34,38 +35,77 @@ export class MochiClient {
             throw new Error("Deck ID is required to create a card");
         }
         
-        try {
-            const response = await requestUrl({
-                url: `${this.baseUrl}/cards`,
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify({
-                    content: card.content,
-                    "deck-id": card.deckId,
-                    "manual-tags": card.tags || []
-                })
-            });
-            
-            if (response.status >= 200 && response.status < 300) {
-                return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
+        // Try multiple endpoint patterns
+        const endpoints = [
+            // Pattern 1: Top-level cards with deck-id in body (most common)
+            { url: `${this.baseUrl}/cards`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
+            // Pattern 2: Deck-specific endpoint (RESTful)
+            { url: `${this.baseUrl}/decks/${card.deckId}/cards`, body: { content: card.content, "manual-tags": card.tags || [] } },
+            // Pattern 3: Try with /v1 version
+            { url: `${this.baseUrl}/v1/cards`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
+        ];
+        
+        let lastError: unknown;
+        const attemptedUrls: string[] = [];
+        for (const endpoint of endpoints) {
+            attemptedUrls.push(endpoint.url);
+            try {
+                const response = await requestUrl({
+                    url: endpoint.url,
+                    method: "POST",
+                    headers: this.getHeaders(),
+                    body: JSON.stringify(endpoint.body)
+                });
+                
+                if (response.status >= 200 && response.status < 300) {
+                    return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
+                }
+                lastError = { status: response.status, text: response.text, message: `Status ${response.status}`, url: endpoint.url };
+            } catch (error: unknown) {
+                // Add URL info to error if it's a status error
+                if (error && typeof error === 'object' && 'status' in error) {
+                    (error as { url?: string }).url = endpoint.url;
+                }
+                lastError = error;
+                // Continue to next endpoint
+                continue;
             }
-            throw new Error(`Create card failed: ${response.status} - ${response.text || 'Unknown error'}`);
-        } catch (error: unknown) {
-            this.handleError(error, "Create card");
         }
+        
+        // If all endpoints failed, include attempted URLs in error
+        const urlsInfo = attemptedUrls.length > 0 ? ` (Tried: ${attemptedUrls.join(', ')})` : '';
+        if (lastError && typeof lastError === 'object' && 'message' in lastError) {
+            (lastError as { message: string }).message += urlsInfo;
+        }
+        this.handleError(lastError, "Create card");
     }
 
     async updateCard(cardId: string, card: { content: string, tags?: string[] }) {
         try {
-            const response = await requestUrl({
-                url: `${this.baseUrl}/cards/${cardId}`,
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify({
-                    content: card.content,
-                    "manual-tags": card.tags || []
-                })
-            });
+            // Try PUT first (standard REST), fallback to POST if needed
+            let response;
+            try {
+                response = await requestUrl({
+                    url: `${this.baseUrl}/cards/${cardId}`,
+                    method: "PUT",
+                    headers: this.getHeaders(),
+                    body: JSON.stringify({
+                        content: card.content,
+                        "manual-tags": card.tags || []
+                    })
+                });
+            } catch (putError: unknown) {
+                // Fallback to POST if PUT is not supported
+                response = await requestUrl({
+                    url: `${this.baseUrl}/cards/${cardId}`,
+                    method: "POST",
+                    headers: this.getHeaders(),
+                    body: JSON.stringify({
+                        content: card.content,
+                        "manual-tags": card.tags || []
+                    })
+                });
+            }
             
             if (response.status >= 200 && response.status < 300) {
                 return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
