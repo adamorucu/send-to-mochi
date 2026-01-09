@@ -1,8 +1,9 @@
 import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, SamplePluginSettings, SamplePluginSettingTab} from "./settings";
+import {DEFAULT_SETTINGS, SendToMochiSettingTab} from "./settings";
+import {PluginSettings} from "./types";
 
-export default class SamplePlugin extends Plugin {
-	settings: SamplePluginSettings;
+export default class SendToMochiPlugin extends Plugin {
+	settings: PluginSettings;
 
 	async onload() {
 		await this.loadSettings();
@@ -55,7 +56,7 @@ export default class SamplePlugin extends Plugin {
 		});
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SamplePluginSettingTab(this.app, this));
+		this.addSettingTab(new SendToMochiSettingTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
@@ -70,7 +71,7 @@ export default class SamplePlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<SamplePluginSettings>);
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<PluginSettings>);
 	}
 
 	async saveSettings() {

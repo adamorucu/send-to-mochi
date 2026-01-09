@@ -1,18 +1,16 @@
 import {App, PluginSettingTab, Setting} from "obsidian";
-import SamplePlugin from "./main";
+import SendToMochiPlugin from "./main";
+import {PluginSettings} from "./types";
 
-export interface SamplePluginSettings {
-	mySetting: string;
+export const DEFAULT_SETTINGS: PluginSettings = {
+	apiKey: '',
+	defaultDeckId: ''
 }
 
-export const DEFAULT_SETTINGS: SamplePluginSettings = {
-	mySetting: 'default'
-}
+export class SendToMochiSettingTab extends PluginSettingTab {
+	plugin: SendToMochiPlugin;
 
-export class SamplePluginSettingTab extends PluginSettingTab {
-	plugin: SamplePlugin;
-
-	constructor(app: App, plugin: SamplePlugin) {
+	constructor(app: App, plugin: SendToMochiPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -22,14 +20,29 @@ export class SamplePluginSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
+		containerEl.createEl('h2', {text: 'Mochi API settings'});
+
 		new Setting(containerEl)
-			.setName('Settings #1')
-			.setDesc('It\'s a secret')
+			.setName('API key')
+			.setDesc('Your Mochi API key. You can find this in your Mochi account settings.')
+			.addText(text => {
+				text.setPlaceholder('Enter your API key')
+					.setValue(this.plugin.settings.apiKey)
+					.inputEl.type = 'password';
+				text.onChange(async (value) => {
+					this.plugin.settings.apiKey = value;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName('Default deck ID')
+			.setDesc('The default deck ID where new cards will be created. You can find this in your Mochi deck settings.')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+				.setPlaceholder('Enter default deck ID')
+				.setValue(this.plugin.settings.defaultDeckId)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.defaultDeckId = value;
 					await this.plugin.saveSettings();
 				}));
 	}
