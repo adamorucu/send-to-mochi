@@ -1,96 +1,120 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, SendToMochiSettingTab} from "./settings";
-import {PluginSettings} from "./types";
+import { App, Plugin, PluginSettingTab, Setting, Editor } from "obsidian";
+import { MochiClient } from "mochi-api";
+import { SyncEngine } from "sync-engine";
+import { SyncState, PluginSettings } from "types";
 
-export default class SendToMochiPlugin extends Plugin {
-	settings: PluginSettings;
+const DEFAULT_SETTINGS: PluginSettings = {
+    apiKey: "",
+    defaultDeckId: ""
+};
 
-	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SamplePluginModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SamplePluginModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SendToMochiSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
-
-
-	}
-
-	onunload() {
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<PluginSettings>);
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+interface StoredData extends PluginSettings {
+    syncState?: SyncState;
 }
 
-class SamplePluginModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+export default class MochiSyncPlugin extends Plugin {
+    settings: PluginSettings;
+    syncState: SyncState = { cards: {}, decks: {} };
+    client: MochiClient;
+    engine: SyncEngine;
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+    async onload() {
+        await this.loadSettings();
+        await this.loadSyncState();
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+        this.client = new MochiClient(this.settings.apiKey);
+        this.engine = new SyncEngine(
+            this.app, 
+            this.client, 
+            this.settings,
+            () => this.syncState,
+            async (s) => this.saveSyncState(s)
+        );
+
+        // Command: Trigger Sync
+        this.addCommand({
+            id: 'sync-mochi-cards',
+            name: 'Sync cards to mochi',
+            callback: () => this.engine.runSync()
+        });
+
+        // Command: Insert Card Template
+        this.addCommand({
+            id: 'insert-mochi-card',
+            name: 'Insert new mochi card',
+            editorCallback: (editor: Editor) => {
+                const id = crypto.randomUUID().slice(0, 8); // Short random ID
+                const template = `\n\`\`\`mochi\n%% id:${id} %%\nQ: \nA: \n\`\`\`\n`;
+                editor.replaceSelection(template);
+            }
+        });
+
+        this.addSettingTab(new MochiSettingTab(this.app, this));
+    }
+
+    async loadSettings() {
+        const data = (await this.loadData()) as StoredData | null;
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    }
+
+    async saveSettings() {
+        await this.saveData(this.settings); // Note: Should separate settings from sync state in prod
+    }
+
+    async loadSyncState() {
+        // In this simple version, we store state in the same file as settings.
+        // In prod, consider using a separate file adapter.
+        const data = (await this.loadData()) as StoredData | null;
+        if (data && data.syncState) {
+            this.syncState = data.syncState;
+        }
+    }
+
+    async saveSyncState(state: SyncState) {
+        this.syncState = state;
+        
+        // Load existing data and merge with sync state
+        const existingData = (await this.loadData()) as StoredData | null;
+        const data: StoredData = {
+            ...this.settings,
+            ...(existingData || {}),
+            syncState: state
+        };
+        
+        await this.saveData(data);
+    }
+}
+
+class MochiSettingTab extends PluginSettingTab {
+    plugin: MochiSyncPlugin;
+
+    constructor(app: App, plugin: MochiSyncPlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
+
+    display(): void {
+        const { containerEl } = this;
+        containerEl.empty();
+
+        new Setting(containerEl)
+            .setName('API key')
+            .addText(text => text
+                .setValue(this.plugin.settings.apiKey)
+                .onChange(async (value) => {
+                    this.plugin.settings.apiKey = value;
+                    await this.plugin.saveSettings();
+                    // Re-init client
+                    this.plugin.client = new MochiClient(value);
+                }));
+
+        new Setting(containerEl)
+            .setName('Default deck ID')
+            .addText(text => text
+                .setValue(this.plugin.settings.defaultDeckId)
+                .onChange(async (value) => {
+                    this.plugin.settings.defaultDeckId = value;
+                    await this.plugin.saveSettings();
+                }));
+    }
 }
