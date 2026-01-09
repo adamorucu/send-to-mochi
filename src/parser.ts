@@ -1,4 +1,4 @@
-import { MochiCardBlock, CardType } from "./types";
+import { MochiCardBlock } from "./types";
 import { TFile } from "obsidian";
 
 export interface ParseResult {

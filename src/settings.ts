@@ -20,11 +20,13 @@ export class SendToMochiSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Mochi API settings'});
+		new Setting(containerEl)
+			.setName('Mochi API')
+			.setHeading();
 
 		new Setting(containerEl)
 			.setName('API key')
-			.setDesc('Your Mochi API key. You can find this in your Mochi account settings.')
+			.setDesc('Your authentication key for the mochi service.')
 			.addText(text => {
 				text.setPlaceholder('Enter your API key')
 					.setValue(this.plugin.settings.apiKey)
@@ -37,7 +39,7 @@ export class SendToMochiSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName('Default deck ID')
-			.setDesc('The default deck ID where new cards will be created. You can find this in your Mochi deck settings.')
+			.setDesc('The default deck where new cards will be created.')
 			.addText(text => text
 				.setPlaceholder('Enter default deck ID')
 				.setValue(this.plugin.settings.defaultDeckId)
