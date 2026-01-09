@@ -1,7 +1,13 @@
+export type CardType = "qa" | "cloze";
+
 export interface MochiCardBlock {
     id: string; // The local unique ID
-    question: string;
-    answer: string;
+    type: CardType;
+    // For Q&A cards
+    question?: string;
+    answer?: string;
+    // For cloze cards
+    content?: string;
     deck?: string;
     tags: string[];
     filePath: string; // Where we found it

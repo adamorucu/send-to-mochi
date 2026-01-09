@@ -59,8 +59,21 @@ export class SyncEngine {
 
             // Process each card
             for (const card of cards) {
-                const currentHash = simpleHash(card.question + card.answer + card.tags.join(","));
-                const mochiContent = `${card.question}\n---\n${card.answer}`;
+                // Generate content hash based on card type
+                let currentHash: string;
+                let mochiContent: string;
+                
+                if (card.type === "cloze" && card.content) {
+                    currentHash = simpleHash(card.content + card.tags.join(","));
+                    mochiContent = card.content;
+                } else if (card.type === "qa" && card.question && card.answer) {
+                    currentHash = simpleHash(card.question + card.answer + card.tags.join(","));
+                    mochiContent = `${card.question}\n---\n${card.answer}`;
+                } else {
+                    console.warn(`Card ${card.id} has invalid format, skipping`);
+                    continue;
+                }
+                
                 const existingState = state.cards[card.id];
 
                 if (!existingState) {
@@ -133,7 +146,7 @@ export class SyncEngine {
 
         // Show completion message
         if (totalCardsFound === 0) {
-            new Notice(`Sync complete but no cards found. Use format:\n\`\`\`mochi\n%% id:card-id %%\nQ: Question\nA: Answer\n\`\`\``, 10000);
+            new Notice("Sync complete but no cards found. Use format:\n```mochi\nQuestion\n---\nAnswer\n```\nor\n```mochi\nThis is {{1:cloze}} text\n```", 10000);
         } else {
             new Notice(`Sync complete: ${created} created, ${updated} updated.`);
         }

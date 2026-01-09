@@ -1,4 +1,4 @@
-import { MochiCardBlock } from "./types";
+import { MochiCardBlock, CardType } from "./types";
 import { TFile } from "obsidian";
 
 export interface ParseResult {
@@ -10,11 +10,18 @@ export class CardParser {
     // Matches all ```mochi code blocks (with or without IDs)
     private static readonly CARD_BLOCK_REGEX = /```mochi\s*\n([\s\S]*?)```/g;
     
-    // Extract question, answer, tags, and deck from card body
+    // Extract question, answer, tags, and deck from card body (legacy format)
     private static readonly Q_REGEX = /^\s*Q:\s*([\s\S]*?)(?=^\s*A:|^\s*Tags:|^\s*Deck:|$)/m;
     private static readonly A_REGEX = /^\s*A:\s*([\s\S]*?)(?=^\s*Tags:|^\s*Deck:|$)/m;
     private static readonly TAGS_REGEX = /^\s*Tags:\s*(.*)$/m;
     private static readonly DECK_REGEX = /^\s*Deck:\s*(.*)$/m;
+    
+    // Detect cloze format: {{1:text}} or {{c1::text}} or {{c1:text}}
+    private static readonly CLOZE_REGEX = /\{\{(\d+|c\d+)(?:::|:)?([^}]+)\}\}/;
+    
+    // Detect markdown format: content separated by ---
+    // Matches --- on its own line (with optional whitespace)
+    private static readonly MARKDOWN_SEPARATOR = /^\s*---\s*$/m;
 
     private static generateId(): string {
         return crypto.randomUUID().slice(0, 8);
@@ -55,22 +62,68 @@ export class CardParser {
 
             // Parse card content (body without ID line if present)
             const bodyWithoutId = idMatch ? body.substring(idMatch[0].length) : body;
-            const qMatch = this.Q_REGEX.exec(bodyWithoutId);
-            const aMatch = this.A_REGEX.exec(bodyWithoutId);
             const tagsMatch = this.TAGS_REGEX.exec(bodyWithoutId);
             const deckMatch = this.DECK_REGEX.exec(bodyWithoutId);
-
-            // Card must have both question and answer
-            if (qMatch && qMatch[1] && aMatch && aMatch[1]) {
+            const tags = tagsMatch && tagsMatch[1] ? tagsMatch[1].split(',').map(t => t.trim()).filter(t => t) : [];
+            const deck = deckMatch && deckMatch[1] ? deckMatch[1].trim() : undefined;
+            
+            // Remove Tags: and Deck: lines from content for parsing
+            let contentForParsing = bodyWithoutId
+                .replace(this.TAGS_REGEX, '')
+                .replace(this.DECK_REGEX, '')
+                .trim();
+            
+            // Check for cloze format first ({{1:text}} or {{c1::text}})
+            if (this.CLOZE_REGEX.test(contentForParsing)) {
+                // Normalize cloze format: convert {{1:text}} to {{c1::text}} for Mochi API
+                const normalizedContent = contentForParsing.replace(/\{\{(\d+)(?:::|:)?([^}]+)\}\}/g, '{{c$1::$2}}');
                 cards.push({
                     id: cardId.trim(),
-                    question: qMatch[1].trim(),
-                    answer: aMatch[1].trim(),
-                    tags: tagsMatch && tagsMatch[1] ? tagsMatch[1].split(',').map(t => t.trim()).filter(t => t) : [],
-                    deck: deckMatch && deckMatch[1] ? deckMatch[1].trim() : undefined,
+                    type: "cloze",
+                    content: normalizedContent,
+                    tags,
+                    deck,
                     filePath: file.path,
                     originalContent: newBlock
                 });
+            }
+            // Check for markdown format (--- separator)
+            else if (this.MARKDOWN_SEPARATOR.test(contentForParsing)) {
+                const parts = contentForParsing.split(this.MARKDOWN_SEPARATOR);
+                if (parts.length >= 2 && parts[0]) {
+                    const question = parts[0].trim();
+                    // Join remaining parts with --- in case there are multiple separators
+                    const answer = parts.slice(1).join('\n---\n').trim();
+                    if (question && answer) {
+                        cards.push({
+                            id: cardId.trim(),
+                            type: "qa",
+                            question,
+                            answer,
+                            tags,
+                            deck,
+                            filePath: file.path,
+                            originalContent: newBlock
+                        });
+                    }
+                }
+            }
+            // Fall back to legacy Q:/A: format
+            else {
+                const qMatch = this.Q_REGEX.exec(bodyWithoutId);
+                const aMatch = this.A_REGEX.exec(bodyWithoutId);
+                if (qMatch && qMatch[1] && aMatch && aMatch[1]) {
+                    cards.push({
+                        id: cardId.trim(),
+                        type: "qa",
+                        question: qMatch[1].trim(),
+                        answer: aMatch[1].trim(),
+                        tags,
+                        deck,
+                        filePath: file.path,
+                        originalContent: newBlock
+                    });
+                }
             }
         }
 
