@@ -18,9 +18,10 @@ export class MochiClient {
         };
     }
 
-    private handleError(error: any, operation: string): never {
-        if (error?.status) {
-            throw new Error(`${operation} failed: ${error.status} - ${error.text || error.message || 'Unknown error'}`);
+    private handleError(error: unknown, operation: string): never {
+        if (error && typeof error === 'object' && 'status' in error) {
+            const statusError = error as { status: number; text?: string; message?: string };
+            throw new Error(`${operation} failed: ${statusError.status} - ${statusError.text || statusError.message || 'Unknown error'}`);
         }
         if (error instanceof Error) {
             throw new Error(`${operation} failed: ${error.message}`);
@@ -46,10 +47,10 @@ export class MochiClient {
             });
             
             if (response.status >= 200 && response.status < 300) {
-                return response.json;
+                return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
             }
             throw new Error(`Create card failed: ${response.status} - ${response.text || 'Unknown error'}`);
-        } catch (error: any) {
+        } catch (error: unknown) {
             this.handleError(error, "Create card");
         }
     }
@@ -67,10 +68,10 @@ export class MochiClient {
             });
             
             if (response.status >= 200 && response.status < 300) {
-                return response.json;
+                return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
             }
             throw new Error(`Update card failed: ${response.status} - ${response.text || 'Unknown error'}`);
-        } catch (error: any) {
+        } catch (error: unknown) {
             this.handleError(error, "Update card");
         }
     }
@@ -81,7 +82,8 @@ export class MochiClient {
             method: "GET",
             headers: this.getHeaders()
         });
-        return res.json.docs || [];
+        const json = res.json as { docs?: {id: string, name: string}[] };
+        return json.docs || [];
     }
 }
 

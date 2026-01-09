@@ -1,9 +1,19 @@
 import tseslint from 'typescript-eslint';
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
-import { globalIgnores } from "eslint/config";
 
 export default tseslint.config(
+	{
+		ignores: [
+			"node_modules",
+			"dist",
+			"esbuild.config.mjs",
+			"eslint.config.js",
+			"version-bump.mjs",
+			"versions.json",
+			"main.js",
+		],
+	},
 	{
 		languageOptions: {
 			globals: {
@@ -13,7 +23,8 @@ export default tseslint.config(
 				projectService: {
 					allowDefaultProject: [
 						'eslint.config.js',
-						'manifest.json'
+						'manifest.json',
+						'main.ts'
 					]
 				},
 				tsconfigRootDir: import.meta.dirname,
@@ -22,13 +33,4 @@ export default tseslint.config(
 		},
 	},
 	...obsidianmd.configs.recommended,
-	globalIgnores([
-		"node_modules",
-		"dist",
-		"esbuild.config.mjs",
-		"eslint.config.js",
-		"version-bump.mjs",
-		"versions.json",
-		"main.js",
-	]),
 );

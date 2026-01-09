@@ -25,16 +25,16 @@ export class SyncEngine {
     ) {}
 
     async runSync() {
-        new Notice("Starting Mochi sync...");
+        new Notice("Starting mochi sync...");
         
         // Validate settings
         if (!this.settings.apiKey) {
-            new Notice("Error: API Key is not set. Please configure it in settings.", 10000);
+            new Notice("API key is not set. Please configure it in settings.", 10000);
             return;
         }
         
         if (!this.settings.defaultDeckId) {
-            new Notice("Error: Default Deck ID is not set. Please configure it in settings.", 10000);
+            new Notice("Default deck is not set. Please configure it in settings.", 10000);
             return;
         }
         
@@ -73,7 +73,7 @@ export class SyncEngine {
                         });
                         
                         const mochiId = res?.id || res?._id || res?.cardId || res?.card?.id;
-                        if (!mochiId) {
+                        if (!mochiId || typeof mochiId !== 'string') {
                             console.warn(`Card ${card.id} created but no ID in response`);
                             state.cards[card.id] = {
                                 mochiId: 'unknown',
@@ -88,9 +88,11 @@ export class SyncEngine {
                             };
                         }
                         created++;
-                    } catch (e: any) {
-                        const errorMsg = e?.message || String(e);
-                        if (errorMsg.includes('404')) {
+                    } catch (e: unknown) {
+                        const errorMsg = (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string') 
+                            ? e.message 
+                            : String(e);
+                        if (typeof errorMsg === 'string' && errorMsg.includes('404')) {
                             new Notice(`404 Error creating card ${card.id}. Check deck ID "${this.settings.defaultDeckId}" and API endpoint.`, 10000);
                         } else {
                             new Notice(`Failed to create card ${card.id}: ${errorMsg}`, 8000);
@@ -107,8 +109,10 @@ export class SyncEngine {
                         existingState.contentHash = currentHash;
                         existingState.lastSync = Date.now();
                         updated++;
-                    } catch (e: any) {
-                        const errorMsg = e?.message || String(e);
+                    } catch (e: unknown) {
+                        const errorMsg = (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string') 
+                            ? e.message 
+                            : String(e);
                         new Notice(`Failed to update card ${card.id}: ${errorMsg}`, 8000);
                         console.error(`[MochiSync] Failed to update card ${card.id}:`, e);
                     }
@@ -119,8 +123,11 @@ export class SyncEngine {
         // Save sync state
         try {
             await this.saveState(state);
-        } catch (e: any) {
-            new Notice(`Error saving sync state: ${e?.message || String(e)}`, 10000);
+        } catch (e: unknown) {
+            const errorMsg = (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string') 
+                ? e.message 
+                : String(e);
+            new Notice(`Saving sync state failed: ${errorMsg}`, 10000);
             throw e;
         }
 

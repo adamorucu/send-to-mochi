@@ -30,14 +30,14 @@ export default class MochiSyncPlugin extends Plugin {
         // Command: Trigger Sync
         this.addCommand({
             id: 'sync-mochi-cards',
-            name: 'Sync cards to Mochi',
+            name: 'Sync cards to mochi',
             callback: () => this.engine.runSync()
         });
 
         // Command: Insert Card Template
         this.addCommand({
             id: 'insert-mochi-card',
-            name: 'Insert new Mochi card',
+            name: 'Insert new mochi card',
             editorCallback: (editor: Editor) => {
                 const id = crypto.randomUUID().slice(0, 8); // Short random ID
                 const template = `\n\`\`\`mochi\n%% id:${id} %%\nQ: \nA: \n\`\`\`\n`;
@@ -49,7 +49,8 @@ export default class MochiSyncPlugin extends Plugin {
     }
 
     async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        const data = await this.loadData() as Partial<PluginSettings> | null;
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
     }
 
     async saveSettings() {
@@ -59,8 +60,8 @@ export default class MochiSyncPlugin extends Plugin {
     async loadSyncState() {
         // In this simple version, we store state in the same file as settings.
         // In prod, consider using a separate file adapter.
-        const data = await this.loadData();
-        if (data && data.syncState) {
+        const data = await this.loadData() as { syncState?: SyncState } | null;
+        if (data?.syncState) {
             this.syncState = data.syncState;
         }
     }
@@ -69,8 +70,8 @@ export default class MochiSyncPlugin extends Plugin {
         this.syncState = state;
         
         // Load existing data and merge with sync state
-        const existingData = await this.loadData() || {};
-        const data = {
+        const existingData = (await this.loadData() as Partial<PluginSettings> & { syncState?: SyncState }) || {};
+        const data: Partial<PluginSettings> & { syncState: SyncState } = {
             ...existingData,
             syncState: state
         };
@@ -92,7 +93,7 @@ class MochiSettingTab extends PluginSettingTab {
         containerEl.empty();
 
         new Setting(containerEl)
-            .setName('API Key')
+            .setName('API key')
             .addText(text => text
                 .setValue(this.plugin.settings.apiKey)
                 .onChange(async (value) => {
@@ -103,7 +104,7 @@ class MochiSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('Default Deck ID')
+            .setName('Default deck ID')
             .addText(text => text
                 .setValue(this.plugin.settings.defaultDeckId)
                 .onChange(async (value) => {

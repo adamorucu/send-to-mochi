@@ -34,11 +34,13 @@ export class CardParser {
             const body = match[1];
             
             // Check if this block has an ID by looking for %% id:... %% pattern
+            if (!body) continue;
+            
             const idMatch = /^\s*%%\s*id:([\w-]+)\s*%%\s*\n/.exec(body);
             let cardId: string;
             let newBlock: string;
 
-            if (idMatch) {
+            if (idMatch && idMatch[1]) {
                 // Block already has an ID
                 cardId = idMatch[1];
                 newBlock = match[0]; // Keep original block
@@ -59,13 +61,13 @@ export class CardParser {
             const deckMatch = this.DECK_REGEX.exec(bodyWithoutId);
 
             // Card must have both question and answer
-            if (qMatch && aMatch) {
+            if (qMatch && qMatch[1] && aMatch && aMatch[1]) {
                 cards.push({
                     id: cardId.trim(),
                     question: qMatch[1].trim(),
                     answer: aMatch[1].trim(),
-                    tags: tagsMatch ? tagsMatch[1].split(',').map(t => t.trim()).filter(t => t) : [],
-                    deck: deckMatch ? deckMatch[1].trim() : undefined,
+                    tags: tagsMatch && tagsMatch[1] ? tagsMatch[1].split(',').map(t => t.trim()).filter(t => t) : [],
+                    deck: deckMatch && deckMatch[1] ? deckMatch[1].trim() : undefined,
                     filePath: file.path,
                     originalContent: newBlock
                 });
