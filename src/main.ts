@@ -44,7 +44,7 @@ export default class MochiSyncPlugin extends Plugin {
             name: 'Insert new mochi card',
             editorCallback: (editor: Editor) => {
                 const id = crypto.randomUUID().slice(0, 8); // Short random ID
-                const template = `\n\`\`\`mochi\n%% id:${id} %%\nQ: \nA: \n\`\`\`\n`;
+                const template = `\n\`\`\`mochi\n%% id:${id} %%\n--- \n\`\`\`\n`;
                 editor.replaceSelection(template);
             }
         });

@@ -10,9 +10,6 @@ export class CardParser {
     // Matches all ```mochi code blocks (with or without IDs)
     private static readonly CARD_BLOCK_REGEX = /```mochi\s*\n([\s\S]*?)```/g;
     
-    // Extract question, answer, tags, and deck from card body (legacy format)
-    private static readonly Q_REGEX = /^\s*Q:\s*([\s\S]*?)(?=^\s*A:|^\s*Tags:|^\s*Deck:|$)/m;
-    private static readonly A_REGEX = /^\s*A:\s*([\s\S]*?)(?=^\s*Tags:|^\s*Deck:|$)/m;
     private static readonly TAGS_REGEX = /^\s*Tags:\s*(.*)$/m;
     private static readonly DECK_REGEX = /^\s*Deck:\s*(.*)$/m;
     
@@ -106,23 +103,6 @@ export class CardParser {
                             originalContent: newBlock
                         });
                     }
-                }
-            }
-            // Fall back to legacy Q:/A: format
-            else {
-                const qMatch = this.Q_REGEX.exec(bodyWithoutId);
-                const aMatch = this.A_REGEX.exec(bodyWithoutId);
-                if (qMatch && qMatch[1] && aMatch && aMatch[1]) {
-                    cards.push({
-                        id: cardId.trim(),
-                        type: "qa",
-                        question: qMatch[1].trim(),
-                        answer: aMatch[1].trim(),
-                        tags,
-                        deck,
-                        filePath: file.path,
-                        originalContent: newBlock
-                    });
                 }
             }
         }
