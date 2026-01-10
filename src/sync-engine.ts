@@ -105,7 +105,11 @@ export class SyncEngine {
                         const errorMsg = (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string') 
                             ? e.message 
                             : String(e);
-                        if (typeof errorMsg === 'string' && errorMsg.includes('404')) {
+                        if (typeof errorMsg === 'string' && errorMsg.includes('429')) {
+                            new Notice(`Rate limit (429) creating card ${card.id}. Waiting before retry...`, 5000);
+                            // Wait 2 seconds before continuing to next card
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        } else if (typeof errorMsg === 'string' && errorMsg.includes('404')) {
                             new Notice(`404 Error creating card ${card.id}. Check deck ID "${this.settings.defaultDeckId}" and API endpoint.`, 10000);
                         } else {
                             new Notice(`Failed to create card ${card.id}: ${errorMsg}`, 8000);
@@ -126,10 +130,19 @@ export class SyncEngine {
                         const errorMsg = (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string') 
                             ? e.message 
                             : String(e);
-                        new Notice(`Failed to update card ${card.id}: ${errorMsg}`, 8000);
+                        if (typeof errorMsg === 'string' && errorMsg.includes('429')) {
+                            new Notice(`Rate limit (429) updating card ${card.id}. Waiting before retry...`, 5000);
+                            // Wait 2 seconds before continuing to next card
+                            await new Promise(resolve => setTimeout(resolve, 2000));
+                        } else {
+                            new Notice(`Failed to update card ${card.id}: ${errorMsg}`, 8000);
+                        }
                         console.error(`[MochiSync] Failed to update card ${card.id}:`, e);
                     }
                 }
+                
+                // Add delay between API calls to avoid rate limiting (500ms delay)
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
         }
 
@@ -146,7 +159,7 @@ export class SyncEngine {
 
         // Show completion message
         if (totalCardsFound === 0) {
-            new Notice("Sync complete but no cards found. Use format:\n```mochi\nQuestion\n---\nAnswer\n```\nor\n```mochi\nThis is {{1:cloze}} text\n```", 10000);
+            new Notice("Sync complete but no cards found. Use format:\n```mochi\nQuestion\n---\nAnswer\n```\nor\n```mochi\nThis is {{1::cloze}} text\n```", 10000);
         } else {
             new Notice(`Sync complete: ${created} created, ${updated} updated.`);
         }

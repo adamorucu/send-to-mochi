@@ -35,146 +35,118 @@ export class MochiClient {
             throw new Error("Deck ID is required to create a card");
         }
         
-        // First, verify the deck exists by trying to fetch it
-        try {
-            const decks = await this.listDecks();
-            const deckExists = decks.some(d => d.id === card.deckId);
-            if (!deckExists) {
-                throw new Error(`Deck with ID "${card.deckId}" not found. Available decks: ${decks.map(d => `${d.name} (${d.id})`).join(', ') || 'none'}`);
-            }
-        } catch (error: unknown) {
-            // If listing decks fails, log but continue - might be a different issue
-            console.warn("Could not verify deck existence:", error);
-        }
-        
-        // Try multiple endpoint patterns and field name variations
-        // Based on Mochi API documentation, the endpoint should be POST /api/cards/
-        const endpoints = [
-            // Pattern 1: Top-level cards with trailing slash and deck-id (documented format)
-            { url: `${this.baseUrl}/cards/`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
-            // Pattern 2: Try with /v1 version (some APIs use versioning)
-            { url: `${this.baseUrl}/v1/cards/`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
-            // Pattern 3: Top-level cards without trailing slash
-            { url: `${this.baseUrl}/cards`, body: { content: card.content, "deck-id": card.deckId, "manual-tags": card.tags || [] } },
-            // Pattern 4: Deck-specific endpoint (RESTful)
-            { url: `${this.baseUrl}/decks/${card.deckId}/cards`, body: { content: card.content, "manual-tags": card.tags || [] } },
-            // Pattern 5: Deck-specific endpoint with trailing slash
-            { url: `${this.baseUrl}/decks/${card.deckId}/cards/`, body: { content: card.content, "manual-tags": card.tags || [] } },
-            // Pattern 6: Try with deckId (camelCase) instead of deck-id
-            { url: `${this.baseUrl}/cards/`, body: { content: card.content, deckId: card.deckId, tags: card.tags || [] } },
-            // Pattern 7: Try with deck_id (snake_case)
-            { url: `${this.baseUrl}/cards/`, body: { content: card.content, deck_id: card.deckId, tags: card.tags || [] } },
-            // Pattern 8: Try with deck field name
-            { url: `${this.baseUrl}/cards/`, body: { content: card.content, deck: card.deckId, tags: card.tags || [] } },
-        ];
-        
+        // Use the standard documented endpoint: POST /api/cards/
+        // Retry with exponential backoff on 429 errors
+        const maxRetries = 3;
         let lastError: unknown;
-        const attemptedUrls: string[] = [];
-        for (const endpoint of endpoints) {
-            attemptedUrls.push(endpoint.url);
+        
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
+                if (attempt > 0) {
+                    // Wait before retry: 1s, 2s, 4s
+                    const delay = Math.pow(2, attempt - 1) * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+                
                 const response = await requestUrl({
-                    url: endpoint.url,
+                    url: `${this.baseUrl}/cards/`,
                     method: "POST",
                     headers: this.getHeaders(),
-                    body: JSON.stringify(endpoint.body)
+                    body: JSON.stringify({
+                        content: card.content,
+                        "deck-id": card.deckId,
+                        "manual-tags": card.tags || []
+                    })
                 });
                 
                 if (response.status >= 200 && response.status < 300) {
                     return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
                 }
                 
-                // Log the response for debugging
-                console.debug(`Attempted ${endpoint.url} with body:`, endpoint.body);
-                console.debug(`Response status: ${response.status}, body:`, response.text);
-                
-                lastError = { 
-                    status: response.status, 
-                    text: response.text, 
-                    message: `Status ${response.status}: ${response.text || 'Unknown error'}`,
-                    url: endpoint.url 
-                };
-            } catch (error: unknown) {
-                // Add URL info to error if it's a status error
-                if (error && typeof error === 'object' && 'status' in error) {
-                    (error as { url?: string }).url = endpoint.url;
-                    // Try to extract response text if available
-                    if ('text' in error) {
-                        console.debug(`Error response from ${endpoint.url}:`, (error as { text?: string }).text);
-                    }
+                // If 429 and not last attempt, retry
+                if (response.status === 429 && attempt < maxRetries) {
+                    lastError = { status: 429, text: response.text, message: `Rate limited (429)` };
+                    continue;
                 }
-                lastError = error;
-                // Continue to next endpoint
-                continue;
+                
+                // For non-429 errors or 429 on last attempt, throw
+                throw new Error(`Create card failed: ${response.status} - ${response.text || 'Unknown error'}`);
+            } catch (error: unknown) {
+                // Check if it's a 429 error and we can retry
+                if (error && typeof error === 'object' && 'status' in error && (error as { status: number }).status === 429 && attempt < maxRetries) {
+                    lastError = error;
+                    continue;
+                }
+                this.handleError(error, "Create card");
             }
         }
         
-        // If all endpoints failed, provide helpful error message
-        const urlsInfo = attemptedUrls.length > 0 ? ` (Tried: ${attemptedUrls.join(', ')})` : '';
-        let errorMessage = "Create card failed";
-        
-        if (lastError && typeof lastError === 'object') {
-            if ('status' in lastError && (lastError as { status: number }).status === 404) {
-                errorMessage += `: 404 - The card creation endpoint was not found${urlsInfo}. `;
-                errorMessage += `This may indicate that the Mochi API structure has changed. `;
-                errorMessage += `Please verify: 1) Your deck ID "${card.deckId}" is correct, 2) Your API key has permission to create cards, 3) Check the Mochi API documentation for the current endpoint structure.`;
-            } else if ('message' in lastError && typeof (lastError as { message: unknown }).message === 'string') {
-                errorMessage = (lastError as { message: string }).message + urlsInfo;
-            } else {
-                const errorStr = lastError instanceof Error ? lastError.message : JSON.stringify(lastError);
-                errorMessage += `: ${errorStr}${urlsInfo}`;
-            }
-        } else {
-            let errorStr: string;
-            if (lastError instanceof Error) {
-                errorStr = lastError.message;
-            } else if (lastError === null || lastError === undefined) {
-                errorStr = 'Unknown error';
-            } else if (typeof lastError === 'string') {
-                errorStr = lastError;
-            } else {
-                errorStr = JSON.stringify(lastError);
-            }
-            errorMessage += `: ${errorStr}${urlsInfo}`;
-        }
-        
-        throw new Error(errorMessage);
+        // If we exhausted retries, throw the last error
+        this.handleError(lastError, "Create card");
     }
 
     async updateCard(cardId: string, card: { content: string, tags?: string[] }) {
-        try {
-            // Try PUT first (standard REST), fallback to POST if needed
-            let response;
+        // Retry with exponential backoff on 429 errors
+        const maxRetries = 3;
+        let lastError: unknown;
+        
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
-                response = await requestUrl({
-                    url: `${this.baseUrl}/cards/${cardId}`,
-                    method: "PUT",
-                    headers: this.getHeaders(),
-                    body: JSON.stringify({
-                        content: card.content,
-                        "manual-tags": card.tags || []
-                    })
-                });
-            } catch {
-                // Fallback to POST if PUT is not supported
-                response = await requestUrl({
-                    url: `${this.baseUrl}/cards/${cardId}`,
-                    method: "POST",
-                    headers: this.getHeaders(),
-                    body: JSON.stringify({
-                        content: card.content,
-                        "manual-tags": card.tags || []
-                    })
-                });
+                if (attempt > 0) {
+                    // Wait before retry: 1s, 2s, 4s
+                    const delay = Math.pow(2, attempt - 1) * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+                
+                // Try PUT first (standard REST), fallback to POST if needed
+                let response;
+                try {
+                    response = await requestUrl({
+                        url: `${this.baseUrl}/cards/${cardId}`,
+                        method: "PUT",
+                        headers: this.getHeaders(),
+                        body: JSON.stringify({
+                            content: card.content,
+                            "manual-tags": card.tags || []
+                        })
+                    });
+                } catch {
+                    // Fallback to POST if PUT is not supported
+                    response = await requestUrl({
+                        url: `${this.baseUrl}/cards/${cardId}`,
+                        method: "POST",
+                        headers: this.getHeaders(),
+                        body: JSON.stringify({
+                            content: card.content,
+                            "manual-tags": card.tags || []
+                        })
+                    });
+                }
+                
+                if (response.status >= 200 && response.status < 300) {
+                    return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
+                }
+                
+                // If 429 and not last attempt, retry
+                if (response.status === 429 && attempt < maxRetries) {
+                    lastError = { status: 429, text: response.text, message: `Rate limited (429)` };
+                    continue;
+                }
+                
+                // For non-429 errors or 429 on last attempt, throw
+                throw new Error(`Update card failed: ${response.status} - ${response.text || 'Unknown error'}`);
+            } catch (error: unknown) {
+                // Check if it's a 429 error and we can retry
+                if (error && typeof error === 'object' && 'status' in error && (error as { status: number }).status === 429 && attempt < maxRetries) {
+                    lastError = error;
+                    continue;
+                }
+                this.handleError(error, "Update card");
             }
-            
-            if (response.status >= 200 && response.status < 300) {
-                return response.json as { id?: string; _id?: string; cardId?: string; card?: { id: string } };
-            }
-            throw new Error(`Update card failed: ${response.status} - ${response.text || 'Unknown error'}`);
-        } catch (error: unknown) {
-            this.handleError(error, "Update card");
         }
+        
+        // If we exhausted retries, throw the last error
+        this.handleError(lastError, "Update card");
     }
 
     async listDecks(): Promise<{id: string, name: string}[]> {

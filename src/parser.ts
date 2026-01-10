@@ -13,8 +13,8 @@ export class CardParser {
     private static readonly TAGS_REGEX = /^\s*Tags:\s*(.*)$/m;
     private static readonly DECK_REGEX = /^\s*Deck:\s*(.*)$/m;
     
-    // Detect cloze format: {{1:text}} or {{c1::text}} or {{c1:text}}
-    private static readonly CLOZE_REGEX = /\{\{(\d+|c\d+)(?:::|:)?([^}]+)\}\}/;
+    // Detect cloze format: {{1::text}} (number followed by double colon)
+    private static readonly CLOZE_REGEX = /\{\{(\d+)::([^}]+)\}\}/;
     
     // Detect markdown format: content separated by ---
     // Matches --- on its own line (with optional whitespace)
@@ -70,14 +70,13 @@ export class CardParser {
                 .replace(this.DECK_REGEX, '')
                 .trim();
             
-            // Check for cloze format first ({{1:text}} or {{c1::text}})
+            // Check for cloze format first ({{1::text}})
             if (this.CLOZE_REGEX.test(contentForParsing)) {
-                // Normalize cloze format: convert {{1:text}} to {{c1::text}} for Mochi API
-                const normalizedContent = contentForParsing.replace(/\{\{(\d+)(?:::|:)?([^}]+)\}\}/g, '{{c$1::$2}}');
+                // Keep cloze format as-is: {{1::text}}
                 cards.push({
                     id: cardId.trim(),
                     type: "cloze",
-                    content: normalizedContent,
+                    content: contentForParsing,
                     tags,
                     deck,
                     filePath: file.path,
